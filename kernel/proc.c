@@ -215,7 +215,7 @@ proc_kpagetable(struct proc *p)
   ukvmmap(pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 
   // CLINT
-  ukvmmap(pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  // ukvmmap(pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
 
   // PLIC
   ukvmmap(pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
@@ -260,14 +260,9 @@ void freekpagetable(pagetable_t pagetable) {
 void
 proc_freekpagetable(struct proc *p, uint64 sz)
 {
-  uvmunmap(p->kpagetable, UART0, 1, 0);
-  uvmunmap(p->kpagetable, VIRTIO0, 1, 0);
-  uvmunmap(p->kpagetable, CLINT, 0x10000 / PGSIZE, 0);
-  uvmunmap(p->kpagetable, PLIC, 0x400000 / PGSIZE, 0);
-  uvmunmap(p->kpagetable, KERNBASE, ((uint64) etext - KERNBASE) / PGSIZE, 0);
-  uvmunmap(p->kpagetable, (uint64) etext, (PHYSTOP - (uint64) etext) / PGSIZE, 0);
-  uvmunmap(p->kpagetable, TRAMPOLINE, 1, 0);
-  uvmunmap(p->kpagetable, p->kstack, 1, 0);
+  uint64 kstackpa = kvmpa(p->kpagetable, p->kstack);
+  kfree((void *) kstackpa);
+  p->kstack = 0;
   freekpagetable(p->kpagetable);
 }
 
@@ -297,6 +292,11 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  // copy pagetable's mappings to kpagetable, but don't copy pa.
+  if (uvmcopypg(p->pagetable, p->kpagetable, p->sz, 0) < 0) {
+    panic("uvmcopypg: fail to copy pagetable to kpagetable!");
+  }
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -322,8 +322,14 @@ growproc(int n)
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    if (uvmcopypg(p->pagetable, p->kpagetable, sz, sz-n)< 0) {
+      sz = uvmdealloc(p->pagetable, sz, sz-n);
+      return -1;
+    }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    int npages = (PGROUNDUP(sz-n) - PGROUNDUP(sz)) / PGSIZE;
+    uvmunmap(p->kpagetable, PGROUNDUP(sz), npages, 0);
   }
   p->sz = sz;
   return 0;
@@ -349,6 +355,13 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  if(uvmcopypg(np->pagetable, np->kpagetable, p->sz, 0) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
   np->sz = p->sz;
 
   np->parent = p;
