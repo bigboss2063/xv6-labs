@@ -67,7 +67,14 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause() == 15 || r_scause() == 13) {
+    // load page fault or store page fault
+    uint64 va = r_stval(); // va is the address that cause the page fault
+    if (pgfhandler(va) == -1) { // if can't handle the page fault, kill the process
+      p->killed = 1;
+    }
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
