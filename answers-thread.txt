@@ -1,0 +1,4 @@
+When thread1 and thread2 execute insert simultaneously, there will be a key lost.
+
+For thread1 and thread2, the head node of bucket is the same one.So if thread1 insert a entry to bucket before thread2, 
+the entry that inserted by thread1 will missing.
