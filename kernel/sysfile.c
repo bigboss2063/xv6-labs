@@ -552,7 +552,7 @@ sys_munmap(void) {
   struct proc *p = myproc();
   for (i = 0; i < NVMA; i++) {
     struct vma *v = &p->vmatable[i];
-    if (v->valid && v->addr == addr) {
+    if (v->valid && (v->addr <= addr && addr < (v->addr + len))) {
       vma = v;
     }
   }

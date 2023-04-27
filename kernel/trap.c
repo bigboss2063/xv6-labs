@@ -72,7 +72,7 @@ usertrap(void)
     if (mmaphandler(va) == -1) {
       p->killed = 1;
     }
-  }else {
+  } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
