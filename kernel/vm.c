@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 /*
  * the kernel's page table.
@@ -170,9 +175,11 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      // panic("uvmunmap: walk");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      // panic("uvmunmap: not mapped");
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -428,4 +435,59 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int
+mmaphandler(uint64 va) {
+  int i;
+  struct proc *p = myproc();
+  struct vma *vma = 0;
+  struct inode *ip;
+  for(i = 0; i < NVMA; i++) {
+    struct vma *v = &p->vmatable[i];
+    if (v->valid) {
+      if (va >= v->addr && va < (v->addr + v->len * PGSIZE)) {
+        vma = v;
+        break;
+      }
+    }
+  }
+  if (vma == 0) {
+    return -1;
+  }
+  uint64 ka = (uint64)kalloc();
+  if (ka == 0) {
+    return -1;
+  }
+  memset((void *) ka, 0, PGSIZE);
+  va = PGROUNDDOWN(va);
+  pte_t * pte;
+  // avoid remap panic.
+  if ((pte = walk(p->pagetable, va, 0)) != 0 && (*pte & PTE_V) != 0) {
+    kfree((void *) ka);
+    return -1;
+  }
+  int flags = PTE_FLAGS(*pte);
+  if (vma->prot & PROT_READ) {
+    flags |= PTE_R;
+  }
+  if (vma->prot & PROT_WRITE) {
+    flags |= PTE_W;
+  }
+  if (vma->prot & PROT_EXEC) {
+    flags |= PTE_X;
+  }
+  if(mappages(p->pagetable, va, PGSIZE, ka, flags | PTE_U) != 0) {
+    kfree((void *) ka);
+    return -1;
+  }
+  ip = vma->file->ip;
+  begin_op();
+  ilock(ip);
+  if (readi(ip, 0, ka, PGROUNDDOWN(vma->offset + (va - vma->addr)), PGSIZE) < 0) {
+    return -1;
+  }
+  iunlock(ip);
+  end_op();
+  return 0;
 }

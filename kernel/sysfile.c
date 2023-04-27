@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -482,5 +483,105 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_mmap(void) {
+
+  uint64 len, offset;
+
+  int prot, flags, fd;
+
+  if(argaddr(1, &len) < 0 || argint(2, &prot) < 0 || argint(3, &flags) < 0 || argint(4, &fd) < 0 || argaddr(5, &offset) < 0) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+  struct file *file = p->ofile[fd];
+  
+  if (file->readable && !file->writable && !(flags & MAP_PRIVATE)) {
+    return -1;
+  }
+
+  struct vma *vma = 0;
+
+  int found = 0;
+  uint64 addr = TRAPFRAME;
+
+  for(int i = 0; i < 16; i++) {
+    if(!p->vmatable[i].valid && !found) {
+      found = 1;
+      vma = &p->vmatable[i];
+    } else if (p->vmatable[i].valid && p->vmatable[i].addr < addr) {
+      addr = p->vmatable[i].addr;
+    }
+  }
+
+  if (!found) {
+    return -1;
+  }
+  
+  addr = addr - len;
+
+  vma->valid = 1;
+  vma->fd = fd;
+  vma->file = file;
+  vma->len = len;
+  vma->offset = offset;
+  vma->prot = prot;
+  vma->flags = flags;
+  vma->addr = addr;
+  
+  filedup(vma->file);
+
+  return addr;
+}
+
+uint64
+sys_munmap(void) {
+  
+  uint64 addr, len;
+  
+  if(argaddr(0, &addr) < 0 || argaddr(1, &len) < 0) {
+    return -1;
+  }
+
+  int i;
+  struct vma *vma = 0;
+  struct proc *p = myproc();
+  for (i = 0; i < NVMA; i++) {
+    struct vma *v = &p->vmatable[i];
+    if (v->valid && v->addr == addr) {
+      vma = v;
+    }
+  }
+
+  if (!vma) {
+    return -1;
+  }
+
+  if (vma->flags & MAP_SHARED) {
+    struct inode *ip = vma->file->ip;
+    begin_op();
+    ilock(ip);
+    if(writei(ip, 1, addr, PGROUNDDOWN(vma->offset + (addr - vma->addr)), len) < 0) {
+      iunlock(ip);
+      return -1;
+    }
+    iunlock(ip);
+    end_op();
+  }
+
+  uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+
+  vma->len -= len;
+  if(vma->len == 0) {
+    vma->valid = 0;
+  } else {
+    if (vma->addr == addr)
+      vma->addr += len;
+  }
+
   return 0;
 }
