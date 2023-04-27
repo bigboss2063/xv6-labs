@@ -561,26 +561,16 @@ sys_munmap(void) {
     return -1;
   }
 
-  if (vma->flags & MAP_SHARED) {
-    struct inode *ip = vma->file->ip;
-    begin_op();
-    ilock(ip);
-    if(writei(ip, 1, addr, PGROUNDDOWN(vma->offset + (addr - vma->addr)), len) < 0) {
-      iunlock(ip);
-      return -1;
-    }
-    iunlock(ip);
-    end_op();
+  if (vma->flags & MAP_SHARED && vma->file->writable) {
+    filewrite(vma->file, addr, len);
   }
 
   uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
 
   vma->len -= len;
-  if(vma->len == 0) {
-    vma->valid = 0;
-  } else {
-    if (vma->addr == addr)
-      vma->addr += len;
+  if(vma->len == 0) vma->valid = 0;
+  else {
+    if (vma->addr == addr) vma->addr += len;
   }
 
   return 0;
