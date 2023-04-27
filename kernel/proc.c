@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
@@ -280,6 +284,11 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  for(i = 0; i < NVMA; i++) {
+    np->vmatable[i] = p->vmatable[i];
+  }
+  
   np->sz = p->sz;
 
   np->parent = p;
@@ -393,6 +402,18 @@ exit(int status)
   p->state = ZOMBIE;
 
   release(&original_parent->lock);
+
+  int i;
+  for(i = 0; i < NVMA; i++) {
+    struct vma *v = &p->vmatable[i];
+    if (v->valid) {
+      if (v->flags & MAP_SHARED && v->file->writable) {
+        filewrite(v->file, v->addr, v->len);
+      }
+      uvmunmap(p->pagetable, v->addr, v->len/PGSIZE, 1);
+      v->valid = 0;
+    }
+  }
 
   // Jump into the scheduler, never to return.
   sched();

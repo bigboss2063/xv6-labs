@@ -500,7 +500,7 @@ sys_mmap(void) {
   struct proc *p = myproc();
   struct file *file = p->ofile[fd];
   
-  if (file->readable && !file->writable && !(flags & MAP_PRIVATE)) {
+  if ((file->readable && !file->writable) && (prot & PROT_WRITE) && (flags & MAP_SHARED)) {
     return -1;
   }
 
@@ -532,7 +532,7 @@ sys_mmap(void) {
   vma->prot = prot;
   vma->flags = flags;
   vma->addr = addr;
-  
+
   filedup(vma->file);
 
   return addr;
